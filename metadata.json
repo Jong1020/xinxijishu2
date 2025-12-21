@@ -1,0 +1,5 @@
+{
+  "name": "IT Exam Auto-Grader",
+  "description": "基于 Gemini 和 DeepSeek 模型的客户端信息技术考试自动评分系统。直接分析 Microsoft Word 文档的 XML 结构进行精准格式评分。",
+  "requestFramePermissions": []
+}
