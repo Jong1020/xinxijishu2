@@ -1,6 +1,7 @@
 import JSZip from 'jszip';
+import { DocxData } from '../types';
 
-export const parseDocx = async (file: File): Promise<{ document: string; styles: string }> => {
+export const parseDocx = async (file: File): Promise<DocxData> => {
   try {
     const zip = new JSZip();
     const content = await zip.loadAsync(file);
@@ -19,9 +20,17 @@ export const parseDocx = async (file: File): Promise<{ document: string; styles:
       stylesXml = await stylesXmlFile.async("string");
     }
 
+    // Extract comments.xml (for checking interactions with comments)
+    const commentsXmlFile = content.file("word/comments.xml");
+    let commentsXml = "";
+    if (commentsXmlFile) {
+      commentsXml = await commentsXmlFile.async("string");
+    }
+
     return {
       document: documentXml,
-      styles: stylesXml
+      styles: stylesXml,
+      comments: commentsXml
     };
   } catch (error) {
     console.error("Error parsing DOCX:", error);
@@ -37,7 +46,8 @@ export const extractFilesFromZip = async (zipFile: File): Promise<File[]> => {
   const promises: Promise<void>[] = [];
 
   content.forEach((relativePath, zipEntry) => {
-    if (!zipEntry.dir && (relativePath.endsWith('.docx') || relativePath.endsWith('.DOCX'))) {
+    // Ignore dotfiles and folder structures, allow docx/DOCX
+    if (!zipEntry.dir && !relativePath.startsWith('__MACOSX') && !relativePath.startsWith('.') && (relativePath.endsWith('.docx') || relativePath.endsWith('.DOCX'))) {
         const promise = zipEntry.async('blob').then((blob) => {
             const extractedFile = new File([blob], relativePath.split('/').pop() || relativePath, {
                 type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'

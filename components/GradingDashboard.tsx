@@ -1,19 +1,19 @@
 import React, { useState } from 'react';
-import { StudentFile, GradingRule, AIConfig, GradingResult, RuleResult } from '../types';
+import { StudentFile, GradingRule, AIConfig, DocxData } from '../types';
 import { parseDocx } from '../services/docxService';
 import { gradeDocument } from '../services/gradingService';
-import { Play, Pause, RefreshCw, CheckCircle, XCircle, FileText, ChevronRight, BarChart2, Download } from 'lucide-react';
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
+import { Play, Pause, RefreshCw, CheckCircle, XCircle, FileText, Download, BarChart2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 interface GradingDashboardProps {
   files: StudentFile[];
   rules: GradingRule[];
   aiConfig: AIConfig;
+  templateData: DocxData | null;
   updateFileStatus: (id: string, updates: Partial<StudentFile>) => void;
 }
 
-export const GradingDashboard: React.FC<GradingDashboardProps> = ({ files, rules, aiConfig, updateFileStatus }) => {
+export const GradingDashboard: React.FC<GradingDashboardProps> = ({ files, rules, aiConfig, templateData, updateFileStatus }) => {
   const [processing, setProcessing] = useState(false);
   const [selectedFile, setSelectedFile] = useState<StudentFile | null>(null);
 
@@ -27,7 +27,7 @@ export const GradingDashboard: React.FC<GradingDashboardProps> = ({ files, rules
     let index = 0;
 
     const next = async () => {
-      if (!processing && index > 0) return; // Stop if paused
+      if (!processing && index > 0) return; // Stop if paused (rough check)
       if (index >= pendingFiles.length) return;
 
       const fileData = pendingFiles[index++];
@@ -37,16 +37,14 @@ export const GradingDashboard: React.FC<GradingDashboardProps> = ({ files, rules
         updateFileStatus(fileData.id, { status: 'processing' });
 
         // 1. Parse XML (Client side)
-        let { document, styles } = fileData.rawXml || { document: '', styles: '' };
-        if (!document) {
-          const parsed = await parseDocx(fileData.file);
-          document = parsed.document;
-          styles = parsed.styles;
-          updateFileStatus(fileData.id, { rawXml: parsed });
+        let docData = fileData.rawXml;
+        if (!docData || !docData.document) {
+          docData = await parseDocx(fileData.file);
+          updateFileStatus(fileData.id, { rawXml: docData });
         }
 
-        // 2. Grade with AI
-        const result = await gradeDocument(document, styles, rules, aiConfig);
+        // 2. Grade with AI (Pass templateData for comparison if available)
+        const result = await gradeDocument(docData, templateData, rules, aiConfig);
         
         updateFileStatus(fileData.id, { 
           status: 'completed', 
@@ -70,9 +68,6 @@ export const GradingDashboard: React.FC<GradingDashboardProps> = ({ files, rules
     for (let i = 0; i < concurrency && i < pendingFiles.length; i++) {
         promises.push(next());
     }
-    
-    // We don't await the whole queue here to allow UI updates, 
-    // but in a real app we might track the "all done" state better.
   };
 
   const toggleProcessing = () => {
@@ -99,9 +94,8 @@ export const GradingDashboard: React.FC<GradingDashboardProps> = ({ files, rules
     XLSX.writeFile(wb, "考试成绩.xlsx");
   };
 
-  // Stats
   const completed = files.filter(f => f.status === 'completed').length;
-  const progress = (completed / files.length) * 100;
+  const progress = files.length > 0 ? (completed / files.length) * 100 : 0;
 
   const getStatusLabel = (status: string) => {
     switch(status) {
@@ -134,7 +128,7 @@ export const GradingDashboard: React.FC<GradingDashboardProps> = ({ files, rules
             >
               {processing ? <><Pause className="w-4 h-4" /> 暂停</> : <><Play className="w-4 h-4" /> 开始评分</>}
             </button>
-            <button onClick={exportExcel} className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md">
+            <button onClick={exportExcel} className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md" title="导出 Excel">
               <Download className="w-4 h-4" />
             </button>
           </div>
@@ -174,7 +168,10 @@ export const GradingDashboard: React.FC<GradingDashboardProps> = ({ files, rules
             <div className="p-6 border-b border-slate-100 flex justify-between items-start">
               <div>
                 <h2 className="text-xl font-bold text-slate-800">{selectedFile.name}</h2>
-                <p className="text-sm text-slate-500 mt-1">状态: <span className="uppercase">{getStatusLabel(selectedFile.status)}</span></p>
+                <div className="flex items-center gap-2 mt-1">
+                     <span className="text-sm text-slate-500 uppercase">{getStatusLabel(selectedFile.status)}</span>
+                     {templateData && <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">高精度对比模式</span>}
+                </div>
               </div>
               {selectedFile.result && (
                 <div className="text-right">
@@ -216,8 +213,13 @@ export const GradingDashboard: React.FC<GradingDashboardProps> = ({ files, rules
                            </span>
                          </div>
                          <p className="text-sm text-slate-600 ml-7"><span className="font-medium">判分理由:</span> {detail.reasoning}</p>
-                         {detail.extractedValue !== "N/A" && (
-                            <p className="text-xs text-slate-400 ml-7 mt-1 font-mono">提取值: {detail.extractedValue}</p>
+                         
+                         {/* Debug / Evidence Info */}
+                         {(detail.extractedValue !== "N/A" || detail.originalValue !== "N/A") && (
+                            <div className="ml-7 mt-2 p-2 bg-white/50 rounded border border-slate-200 text-xs font-mono text-slate-500 flex flex-wrap gap-4">
+                                {detail.extractedValue !== "N/A" && <span>学生值: {detail.extractedValue}</span>}
+                                {detail.originalValue && detail.originalValue !== "N/A" && <span>原始值: {detail.originalValue}</span>}
+                            </div>
                          )}
                        </div>
                      );

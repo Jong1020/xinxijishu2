@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { GradingRule } from '../types';
+import { GradingRule, DocxData } from '../types';
 import { generateRulesFromText } from '../services/gradingService';
-import { Sparkles, Plus, Trash2, Save, Loader2 } from 'lucide-react';
+import { parseDocx } from '../services/docxService';
+import { Sparkles, Plus, Trash2, Save, Loader2, FileUp, Check, Settings as SettingsIcon } from 'lucide-react';
 
 interface RuleEditorProps {
   rules: GradingRule[];
@@ -10,15 +11,18 @@ interface RuleEditorProps {
   setExamTitle: (t: string) => void;
   totalScore: number;
   setTotalScore: (s: number) => void;
+  templateData: DocxData | null;
+  setTemplateData: (data: DocxData | null) => void;
   onNext: () => void;
 }
 
 export const RuleEditor: React.FC<RuleEditorProps> = ({
-  rules, setRules, examTitle, setExamTitle, totalScore, setTotalScore, onNext
+  rules, setRules, examTitle, setExamTitle, totalScore, setTotalScore, templateData, setTemplateData, onNext
 }) => {
   const [descriptionInput, setDescriptionInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationError, setGenerationError] = useState('');
+  const [templateFileName, setTemplateFileName] = useState('');
 
   const handleGenerate = async () => {
     if (!descriptionInput.trim()) return;
@@ -50,6 +54,20 @@ export const RuleEditor: React.FC<RuleEditorProps> = ({
 
   const updateRule = (id: string, field: keyof GradingRule, value: string | number) => {
     setRules(rules.map(r => r.id === id ? { ...r, [field]: value } : r));
+  };
+
+  const handleTemplateUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      try {
+        setTemplateFileName(file.name);
+        const data = await parseDocx(file);
+        setTemplateData(data);
+      } catch (err) {
+        console.error("Failed to parse template", err);
+        alert("模板文件解析失败，请确保是有效的 .docx 文件");
+      }
+    }
   };
 
   const currentTotal = rules.reduce((sum, r) => sum + r.points, 0);
@@ -87,10 +105,46 @@ export const RuleEditor: React.FC<RuleEditorProps> = ({
           </div>
         </div>
 
+        {/* Template Uploader - NEW */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+          <h2 className="text-lg font-semibold mb-2 flex items-center gap-2 text-indigo-900">
+            <FileUp className="w-5 h-5 text-indigo-600" />
+            原始素材 (可选)
+          </h2>
+          <p className="text-xs text-slate-500 mb-4">
+            上传题目原始文档，开启<span className="font-bold text-indigo-600">差异化高精度评分模式</span>。AI 将对比学生作业与原始文档的修改痕迹。
+          </p>
+          
+          <div className="relative">
+             <input 
+              type="file" 
+              accept=".docx"
+              onChange={handleTemplateUpload}
+              className="hidden"
+              id="template-upload"
+            />
+            <label 
+              htmlFor="template-upload" 
+              className={`flex items-center justify-center w-full px-4 py-3 border-2 border-dashed rounded-lg cursor-pointer transition-colors ${templateData ? 'border-green-300 bg-green-50' : 'border-slate-300 hover:border-indigo-400 hover:bg-indigo-50'}`}
+            >
+              {templateData ? (
+                 <div className="flex items-center gap-2 text-green-700">
+                   <Check className="w-5 h-5" />
+                   <span className="text-sm font-medium truncate max-w-[200px]">{templateFileName}</span>
+                 </div>
+              ) : (
+                 <div className="text-center">
+                   <span className="text-sm text-slate-600">点击上传原始文档 (.docx)</span>
+                 </div>
+              )}
+            </label>
+          </div>
+        </div>
+
         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 bg-gradient-to-b from-indigo-50 to-white">
           <h2 className="text-lg font-semibold mb-4 flex items-center gap-2 text-indigo-900">
             <Sparkles className="w-5 h-5 text-indigo-600" />
-            AI 智能识别导入
+            AI 智能规则导入
           </h2>
           <p className="text-sm text-slate-600 mb-3">
             在此粘贴试题要求文字，AI 将自动拆解为具体的评分规则。
@@ -191,8 +245,3 @@ export const RuleEditor: React.FC<RuleEditorProps> = ({
     </div>
   );
 };
-
-// Helper component for icon
-const SettingsIcon = ({ className }: { className?: string }) => (
-  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.72v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>
-);

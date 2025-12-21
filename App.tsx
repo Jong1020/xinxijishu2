@@ -3,7 +3,7 @@ import { Layout } from './components/Layout';
 import { RuleEditor } from './components/RuleEditor';
 import { FileUploader } from './components/FileUploader';
 import { GradingDashboard } from './components/GradingDashboard';
-import { GradingRule, StudentFile, AIConfig, ModelProvider, GeminiModel } from './types';
+import { GradingRule, StudentFile, AIConfig, ModelProvider, GeminiModel, DeepSeekModel, DocxData } from './types';
 
 function App() {
   const [currentStep, setCurrentStep] = useState(1);
@@ -11,13 +11,15 @@ function App() {
   const [totalScore, setTotalScore] = useState(100);
   const [rules, setRules] = useState<GradingRule[]>([]);
   const [files, setFiles] = useState<StudentFile[]>([]);
+  // State for the "Template/Original" file for differential grading
+  const [templateData, setTemplateData] = useState<DocxData | null>(null);
   
   // Configuration State
   const [aiConfig, setAiConfig] = useState<AIConfig>({
     provider: ModelProvider.GEMINI,
     geminiModel: GeminiModel.FLASH,
     deepSeekBaseUrl: 'https://api.deepseek.com', // Default
-    deepSeekModel: 'deepseek-chat',
+    deepSeekModel: DeepSeekModel.CHAT,
     concurrency: 5
   });
 
@@ -51,8 +53,8 @@ function App() {
                     onChange={(e) => setAiConfig({...aiConfig, geminiModel: e.target.value})}
                     className="bg-slate-50 border border-slate-300 rounded px-2 py-1"
                   >
-                    <option value={GeminiModel.FLASH}>Gemini 2.5 Flash</option>
-                    <option value={GeminiModel.PRO}>Gemini 3.0 Pro</option>
+                    <option value={GeminiModel.FLASH}>Gemini 2.0 Flash</option>
+                    <option value={GeminiModel.PRO}>Gemini 1.5 Pro</option>
                   </select>
                 </div>
               ) : (
@@ -63,17 +65,20 @@ function App() {
                       type="text" 
                       value={aiConfig.deepSeekBaseUrl}
                       onChange={(e) => setAiConfig({...aiConfig, deepSeekBaseUrl: e.target.value})}
+                      placeholder="https://api.deepseek.com"
                       className="bg-slate-50 border border-slate-300 rounded px-2 py-1 w-48"
                     />
                   </div>
                   <div className="flex items-center gap-2">
                     <label className="font-medium text-slate-700">模型名称:</label>
-                    <input 
-                      type="text" 
+                     <select 
                       value={aiConfig.deepSeekModel}
                       onChange={(e) => setAiConfig({...aiConfig, deepSeekModel: e.target.value})}
-                      className="bg-slate-50 border border-slate-300 rounded px-2 py-1 w-32"
-                    />
+                      className="bg-slate-50 border border-slate-300 rounded px-2 py-1"
+                    >
+                      <option value="deepseek-chat">deepseek-chat (V3)</option>
+                      <option value="deepseek-reasoner">deepseek-reasoner (R1)</option>
+                    </select>
                   </div>
                 </>
               )}
@@ -100,6 +105,8 @@ function App() {
               setExamTitle={setExamTitle}
               totalScore={totalScore}
               setTotalScore={setTotalScore}
+              templateData={templateData}
+              setTemplateData={setTemplateData}
               onNext={() => setCurrentStep(2)}
            />
         </div>
@@ -118,6 +125,7 @@ function App() {
           files={files}
           rules={rules}
           aiConfig={aiConfig}
+          templateData={templateData}
           updateFileStatus={updateFileStatus}
         />
       )}

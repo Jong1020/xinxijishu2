@@ -1,33 +1,44 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { AIConfig, GradingResult, GradingRule, ModelProvider, RuleResult } from "../types";
+import { AIConfig, DocxData, GradingResult, GradingRule, ModelProvider, RuleResult } from "../types";
 
 // Helper to clean XML to reduce token usage
 const cleanXml = (xml: string): string => {
-  // Remove namespace declarations to save tokens, keep structural tags
-  return xml.replace(/ xmlns:[^=]+="[^"]+"/g, "").slice(0, 30000); // Hard truncate to avoid context limit if massive
+  if (!xml) return "";
+  // Remove namespace declarations and very long distinct attributes to save tokens
+  // Keep structural tags and essential attributes (w:val, w:sz, etc.)
+  let cleaned = xml.replace(/ xmlns:[^=]+="[^"]+"/g, "");
+  
+  // Truncate if massively large, but try to keep the body
+  if (cleaned.length > 50000) {
+      return cleaned.slice(0, 50000) + "...(truncated)";
+  }
+  return cleaned;
 };
 
 export const generateRulesFromText = async (text: string, totalPoints: number): Promise<GradingRule[]> => {
-  // Using Gemini for rule generation as it's the default capable model
+  if (!process.env.API_KEY) {
+    throw new Error("未配置 API Key。请在部署环境的环境变量中配置 'API_KEY'。");
+  }
+
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   
   const prompt = `
-    Analyze the following exam requirements description and break it down into specific grading rules.
-    Total Score available: ${totalPoints}.
+    Analyze the following IT exam requirements and break it down into specific grading rules.
+    Total Score: ${totalPoints}.
     
-    Description:
+    Requirements:
     ${text}
 
     Return a JSON array where each object has:
     - id: unique string
     - description: specific technical requirement in Simplified Chinese (e.g. "标题 '摘要' 应设置为黑体且居中")
-    - points: number (distribute total points fairly)
-    - category: string in Simplified Chinese (e.g., "格式", "内容", "页面布局")
+    - points: number
+    - category: string (e.g., "格式", "内容", "批注")
   `;
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-2.0-flash-exp', // Or use a reliable model alias
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -47,58 +58,92 @@ export const generateRulesFromText = async (text: string, totalPoints: number): 
       }
     });
 
-    const json = JSON.parse(response.text || "[]");
-    return json;
+    return JSON.parse(response.text || "[]");
   } catch (e) {
     console.error("Failed to generate rules", e);
-    throw new Error("Failed to generate rules from text.");
+    throw new Error("规则生成失败，请检查 API Key 或网络连接。");
   }
 };
 
 export const gradeDocument = async (
-  docXml: string,
-  stylesXml: string,
+  studentData: DocxData,
+  templateData: DocxData | null,
   rules: GradingRule[],
   config: AIConfig
 ): Promise<GradingResult> => {
   
-  const cleanedDoc = cleanXml(docXml);
-  const cleanedStyles = cleanXml(stylesXml);
+  const studentDoc = cleanXml(studentData.document);
+  const studentStyles = cleanXml(studentData.styles);
+  const studentComments = cleanXml(studentData.comments);
+
+  let promptContext = "";
+
+  if (templateData) {
+    const templateDoc = cleanXml(templateData.document);
+    // Differential Grading Mode
+    promptContext = `
+    === MODE: DIFFERENTIAL GRADING (TEMPLATE VS STUDENT) ===
+    You are an expert IT Exam Grader. Compare the STUDENT XML against the TEMPLATE (ORIGINAL) XML to verify if the student performed the required operations.
+    
+    IMPORTANT:
+    1. Check if the student *changed* the document according to the rule.
+    2. If the rule says "Delete the paragraph...", verify it exists in Template but NOT in Student.
+    3. If the rule says "Reply to comment...", check the 'comments.xml' for responses.
+    
+    --- TEMPLATE (ORIGINAL) DOCUMENT XML SNIPPET ---
+    ${templateDoc.slice(0, 20000)} ...
+    
+    --- STUDENT DOCUMENT XML SNIPPET ---
+    ${studentDoc}
+    
+    --- STUDENT STYLES XML SNIPPET ---
+    ${studentStyles}
+
+    --- STUDENT COMMENTS XML SNIPPET ---
+    ${studentComments}
+    `;
+  } else {
+    // Standard Grading Mode
+    promptContext = `
+    === MODE: STANDARD GRADING ===
+    You are an expert IT Exam Grader. Verify if the Microsoft Word document meets specific grading criteria by analyzing its XML structure.
+    
+    --- STUDENT DOCUMENT XML SNIPPET ---
+    ${studentDoc}
+    
+    --- STUDENT STYLES XML SNIPPET ---
+    ${studentStyles}
+    
+    --- STUDENT COMMENTS XML SNIPPET ---
+    ${studentComments}
+    `;
+  }
 
   const systemInstruction = `
-    You are an expert IT Exam Grader. Your task is to verify if a Microsoft Word document meets specific grading criteria by analyzing its XML structure.
+    Analyze the provided XML snippets against the specific Grading Rules.
     
-    You will receive:
-    1. document.xml (Content and direct formatting)
-    2. styles.xml (Style definitions)
-    3. A list of Grading Rules
+    For each rule:
+    1. Determine PASSED/FAILED.
+    2. Extract the specific value found in the Student's file (e.g., "14pt", "Red").
+    3. If Template is provided, extract the value from the Template as 'originalValue'.
+    4. Provide reasoning in Simplified Chinese.
     
-    For each rule, determine if it is PASSED or FAILED based on the XML tags and attributes.
-    Common XML hints:
+    Common XML Mapping:
     - Bold: <w:b/>
-    - Center Align: <w:jc w:val="center"/>
-    - Font Size: <w:sz w:val="..."/> (value is half-points, e.g., 24 = 12pt)
-    - Font Family: <w:rFonts .../>
-    - Page Size: <w:pgSz .../>
+    - Center: <w:jc w:val="center"/>
+    - Size: <w:sz w:val="X"/> (X/2 = pt size)
+    - Font: <w:rFonts .../>
     - Margins: <w:pgMar .../>
+    - Comments: <w:comment .../>
     
-    Provide 'reasoning' and 'summary' in Simplified Chinese (简体中文).
-    
-    Return a strictly valid JSON object.
+    Return STRICT JSON.
   `;
 
   const prompt = `
-    Rules to Check:
+    ${promptContext}
+
+    --- GRADING RULES ---
     ${JSON.stringify(rules)}
-
-    ---
-    document.xml snippet:
-    ${cleanedDoc}
-
-    ---
-    styles.xml snippet:
-    ${cleanedStyles}
-    ---
   `;
 
   if (config.provider === ModelProvider.GEMINI) {
@@ -109,11 +154,14 @@ export const gradeDocument = async (
 };
 
 const gradeWithGemini = async (sysInst: string, prompt: string, rules: GradingRule[], modelName: string): Promise<GradingResult> => {
+  if (!process.env.API_KEY) {
+    throw new Error("未配置 API_KEY。请在部署平台的环境变量中设置。");
+  }
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   
   try {
     const response = await ai.models.generateContent({
-      model: modelName,
+      model: modelName, 
       contents: prompt,
       config: {
         systemInstruction: sysInst,
@@ -129,7 +177,8 @@ const gradeWithGemini = async (sysInst: string, prompt: string, rules: GradingRu
                   ruleId: { type: Type.STRING },
                   passed: { type: Type.BOOLEAN },
                   reasoning: { type: Type.STRING },
-                  extractedValue: { type: Type.STRING }
+                  extractedValue: { type: Type.STRING },
+                  originalValue: { type: Type.STRING }
                 },
                 required: ["ruleId", "passed", "reasoning"]
               }
@@ -151,15 +200,18 @@ const gradeWithGemini = async (sysInst: string, prompt: string, rules: GradingRu
 };
 
 const gradeWithDeepSeek = async (sysInst: string, prompt: string, rules: GradingRule[], config: AIConfig): Promise<GradingResult> => {
-    // DeepSeek API compatible request
-    // Note: process.env.DEEPSEEK_API_KEY should be available if running locally with env vars
-    // For this demo, we assume the environment is set up correctly.
-    const apiKey = process.env.DEEPSEEK_API_KEY || ''; 
-    
+    // Check for DeepSeek Key. 
+    // Note: We access process.env directly as per system instructions not to add UI for keys.
+    const apiKey = process.env.DEEPSEEK_API_KEY;
+
+    if (!apiKey || apiKey === 'sk-placeholder') {
+        throw new Error("未配置 DEEPSEEK_API_KEY。请在部署环境的环境变量中添加此 Key。");
+    }
+
     const payload = {
         model: config.deepSeekModel,
         messages: [
-            { role: "system", content: sysInst + " Respond with JSON only." },
+            { role: "system", content: sysInst + " Return JSON format." },
             { role: "user", content: prompt }
         ],
         stream: false,
@@ -177,7 +229,8 @@ const gradeWithDeepSeek = async (sysInst: string, prompt: string, rules: Grading
         });
 
         if (!response.ok) {
-            throw new Error(`DeepSeek API Error: ${response.statusText}`);
+            const errText = await response.text();
+            throw new Error(`DeepSeek API Error: ${response.status} - ${errText}`);
         }
 
         const data = await response.json();
@@ -185,9 +238,9 @@ const gradeWithDeepSeek = async (sysInst: string, prompt: string, rules: Grading
         const rawResult = JSON.parse(content);
         
         return processGradingResponse(rawResult, rules);
-    } catch (error) {
+    } catch (error: any) {
         console.error("DeepSeek Grading Error", error);
-        throw error;
+        throw new Error(`DeepSeek 请求失败: ${error.message}`);
     }
 };
 
@@ -195,7 +248,7 @@ const processGradingResponse = (rawResult: any, rules: GradingRule[]): GradingRe
     let calculatedTotal = 0;
     const maxScore = rules.reduce((acc, r) => acc + r.points, 0);
 
-    const processedDetails: RuleResult[] = rawResult.details.map((d: any) => {
+    const processedDetails: RuleResult[] = (rawResult.details || []).map((d: any) => {
         const rule = rules.find(r => r.id === d.ruleId);
         const points = rule ? rule.points : 0;
         const score = d.passed ? points : 0;
@@ -206,7 +259,8 @@ const processGradingResponse = (rawResult: any, rules: GradingRule[]): GradingRe
             passed: d.passed,
             score: score,
             reasoning: d.reasoning,
-            extractedValue: d.extractedValue || "N/A"
+            extractedValue: d.extractedValue || "N/A",
+            originalValue: d.originalValue || "N/A"
         };
     });
 
