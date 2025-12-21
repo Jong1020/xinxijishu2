@@ -27,7 +27,7 @@ export const generateRulesFromText = async (text: string, totalPoints: number): 
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-latest',
+      model: 'gemini-3-flash-preview',
       contents: prompt,
       config: {
         responseMimeType: "application/json",

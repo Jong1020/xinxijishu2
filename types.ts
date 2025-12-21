@@ -4,7 +4,7 @@ export enum ModelProvider {
 }
 
 export enum GeminiModel {
-  FLASH = 'gemini-2.5-flash-latest',
+  FLASH = 'gemini-3-flash-preview',
   PRO = 'gemini-3-pro-preview'
 }
 
