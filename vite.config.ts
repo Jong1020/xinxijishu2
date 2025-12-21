@@ -4,14 +4,15 @@ import react from '@vitejs/plugin-react';
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
   // Load env file based on `mode` in the current working directory.
-  // Set the third parameter to '' to load all env regardless of the `VITE_` prefix.
   const env = loadEnv(mode, (process as any).cwd(), '');
   
   return {
     plugins: [react()],
-    // Polyfill process.env so the existing code using process.env.API_KEY works
+    // Polyfill process.env so the existing code using process.env.API_KEY works.
+    // JSON.stringify(env) converts the env object to a string representation of the object,
+    // which is then injected as the value of 'process.env'.
     define: {
-      'process.env': env
+      'process.env': JSON.stringify(env)
     },
     build: {
       outDir: 'dist',
