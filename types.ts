@@ -1,16 +1,13 @@
 export enum ModelProvider {
   GEMINI = 'GEMINI',
-  DEEPSEEK = 'DEEPSEEK'
+  DEEPSEEK = 'DEEPSEEK',
+  QWEN = 'QWEN',
+  DOUBAO = 'DOUBAO'
 }
 
 export enum GeminiModel {
-  FLASH = 'gemini-2.0-flash-exp', // Updated to latest experimental flash often used
-  PRO = 'gemini-1.5-pro'
-}
-
-export enum DeepSeekModel {
-  CHAT = 'deepseek-chat',
-  REASONER = 'deepseek-reasoner' // R1
+  FLASH = 'gemini-3-flash-preview',
+  PRO = 'gemini-3-pro-preview'
 }
 
 export interface GradingRule {
@@ -18,12 +15,6 @@ export interface GradingRule {
   description: string;
   points: number;
   category: string;
-}
-
-export interface ExamConfig {
-  title: string;
-  totalScore: number;
-  rules: GradingRule[];
 }
 
 export interface DocxData {
@@ -45,10 +36,10 @@ export interface StudentFile {
 export interface RuleResult {
   ruleId: string;
   passed: boolean;
-  score: number; // Actual points awarded
+  score: number;
   reasoning: string;
-  extractedValue?: string; // What the student actually had
-  originalValue?: string; // What was in the template (if applicable)
+  extractedValue?: string;
+  originalValue?: string;
 }
 
 export interface GradingResult {
@@ -60,8 +51,8 @@ export interface GradingResult {
 
 export interface AIConfig {
   provider: ModelProvider;
-  geminiModel: string;
-  deepSeekBaseUrl: string;
-  deepSeekModel: string;
+  apiKey: string;
+  model: string;
+  baseUrl: string;
   concurrency: number;
 }
