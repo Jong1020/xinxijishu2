@@ -3,10 +3,11 @@ import { AIConfig, DocxData, GradingResult, GradingRule, ModelProvider, RuleResu
 
 const cleanXml = (xml: string): string => {
   if (!xml) return "";
-  // 移除命名空间干扰，减小 Token 占用
+  // 移除命名空间干扰，减小 Token 占用，但保留属性
   let cleaned = xml.replace(/ xmlns:[^=]+="[^"]+"/g, "");
-  if (cleaned.length > 50000) {
-      return cleaned.slice(0, 50000) + "...(truncated)";
+  // 增加长度限制，避免丢失关键信息（如底部的表格）
+  if (cleaned.length > 80000) {
+      return cleaned.slice(0, 80000) + "...(truncated)";
   }
   return cleaned;
 };
@@ -76,34 +77,28 @@ const callForRules = async (prompt: string, config: AIConfig): Promise<GradingRu
       contents: prompt,
       config: {
         responseMimeType: "application/json",
-        responseSchema: schema
+        responseSchema: schema,
+        systemInstruction: "你是一位严谨的信息技术阅卷组长，擅长将复杂的考试要求拆分为最细颗粒度的评分规则。请直接返回 JSON 数组。"
       }
     });
     rawRules = JSON.parse(response.text || "[]");
   } else {
     const result = await callOpenAICompatible(
-      "你是一个 IT 考试评分专家。请直接返回 JSON 数组格式的评分规则。",
+      "你是一个信息技术考试评分专家。你的任务是将考试要求拆分为【极细颗粒度】的原子化评分点。例如：'设置标题为黑体三号红色'必须拆分为'字体名称:黑体'、'字号大小:三号'、'字体颜色:红色'三个独立规则。请直接返回 JSON 数组格式。",
       prompt,
       config
     );
     
-    // 增强的结构兼容性处理：Qwen/DeepSeek 可能返回嵌套结构
     if (Array.isArray(result)) {
         rawRules = result;
     } else if (result && typeof result === 'object') {
-        // 尝试查找常见字段
         if (Array.isArray(result.rules)) rawRules = result.rules;
         else if (Array.isArray(result.gradingRules)) rawRules = result.gradingRules;
         else if (Array.isArray(result.items)) rawRules = result.items;
-        else {
-            // 如果返回的是单个对象，或者结构无法识别，返回空数组防止崩溃
-            console.warn("Received object but could not find rules array:", result);
-            rawRules = [];
-        }
+        else rawRules = [];
     }
   }
 
-  // 防御性映射：确保每个规则都符合 GradingRule 接口，避免 UI 渲染崩溃
   return rawRules.map((r: any, idx: number) => ({
       id: String(r.id || r.ruleId || `rule-${Date.now()}-${idx}`),
       description: String(r.description || r.desc || "无规则描述"),
@@ -115,14 +110,19 @@ const callForRules = async (prompt: string, config: AIConfig): Promise<GradingRu
 // 从纯文本描述生成规则
 export const generateRulesFromText = async (text: string, totalPoints: number, config: AIConfig): Promise<GradingRule[]> => {
   const prompt = `
-    Analyze the following IT exam requirements and break it down into specific grading rules.
-    Total Score: ${totalPoints}.
-    Requirements: ${text}
-    Return a JSON array where each object has:
-    - id: unique string
-    - description: specific technical requirement in Simplified Chinese
-    - points: number
-    - category: string
+    作为信息技术考试专家，请深入分析以下需求并拆分为【极其细致、原子化】的评分细则。
+    
+    原子化准则：
+    1. 单一操作原则：每个评分点仅检查一个属性。如“设置字体、字号、颜色”需拆分为3条规则。
+    2. 参数明确：必须包含具体值，如“字号:18磅”、“行间距:24磅”、“段前间距:1行”。
+    3. 全面覆盖：不错过任何隐藏的操作要求（如纸张大小、页边距、纹理、表格行高等）。
+    
+    总分限制：${totalPoints}分。请根据操作难度在规则间科学分配这${totalPoints}分（通常每项0.5-5分不等）。
+    
+    待拆分的需求：
+    ${text}
+    
+    返回 JSON 数组，包含：id, description (简体中文详细描述), points, category。
   `;
 
   return callForRules(prompt, config);
@@ -132,21 +132,23 @@ export const generateRulesFromText = async (text: string, totalPoints: number, c
 export const generateRulesFromTemplate = async (templateData: DocxData, totalPoints: number, config: AIConfig): Promise<GradingRule[]> => {
   const docContent = cleanXml(templateData.document);
   const commentsContent = cleanXml(templateData.comments);
+  const relsContent = cleanXml(templateData.rels);
   
   const prompt = `
-    You are an IT exam expert. I will provide the XML structure of a Word document and its associated comments.
-    The comments (批注) contain the actual "operation instructions" for students.
+    你正在进行高精度的信息技术自动阅卷规则提取。
+    提供的 XML 包含 Word 主文档片段和相关的“批注（Comments）”。批注中记录了对考生的操作指令。
     
-    TASK:
-    1. Scan the <w:comment> sections in the Comments XML.
-    2. Correlate instructions with the document structure in the Main XML.
-    3. Convert each unique instruction into a structured grading rule.
-    4. Distribute the total score of ${totalPoints} across these rules.
+    任务：
+    1. 解析 <w:comment> 中的文本，将其拆分为原子化的评分规则。
+    2. 如果一个批注包含多条指令（例：“首行缩进2字符，段后0.5行”），必须拆分为两个规则。
+    3. 结合主文档 XML 的上下文，确定具体的格式参数。
+    4. 在所有规则间分配总分 ${totalPoints}。
     
-    MAIN XML (Snippet): ${docContent.slice(0, 20000)}
-    COMMENTS XML: ${commentsContent}
+    MAIN XML 片段: ${docContent.slice(0, 20000)}
+    COMMENTS XML 内容: ${commentsContent}
+    RELS XML (参考资源): ${relsContent.slice(0, 5000)}
     
-    Return a JSON array of rules with: id, description (Chinese), points, category.
+    返回 JSON 数组，包含：id, description (详细技术要求描述), points, category。
   `;
 
   return callForRules(prompt, config);
@@ -161,6 +163,8 @@ export const gradeDocument = async (
   const studentDoc = cleanXml(studentData.document);
   const studentStyles = cleanXml(studentData.styles);
   const studentComments = cleanXml(studentData.comments);
+  const studentRels = cleanXml(studentData.rels);
+  const studentNumbering = cleanXml(studentData.numbering);
 
   let promptContext = templateData 
     ? `=== DIFFERENTIAL GRADING ===
@@ -168,21 +172,42 @@ export const gradeDocument = async (
        TEMPLATE XML: ${cleanXml(templateData.document).slice(0, 15000)}
        STUDENT XML: ${studentDoc}
        STYLES XML: ${studentStyles}
+       RELS XML: ${studentRels}
+       NUMBERING XML: ${studentNumbering}
        COMMENTS XML: ${studentComments}`
     : `=== STANDARD GRADING ===
        Analyze STUDENT structure.
        STUDENT XML: ${studentDoc}
        STYLES XML: ${studentStyles}
+       RELS XML: ${studentRels}
+       NUMBERING XML: ${studentNumbering}
        COMMENTS XML: ${studentComments}`;
 
   const systemInstruction = `
-    Analyze XML against Rules. You must return a VALID JSON object.
-    Output Format:
+    你是一名经验丰富的信息技术教师。请严格按照评分细则对比 XML 结构，进行客观评分。
+    
+    评分核心原则：
+    1. 原子化检查：每个 RuleId 对应一个具体的格式或内容属性。
+    2. 严格匹配：格式属性必须精确符合要求。
+
+    === 关键技术指标检测指南 (Technical Specs) ===
+    
+    1. 表格行高 (Table Row Height):
+       - 标签: <w:trPr> 下的 <w:trHeight w:val="NNN" w:hRule="..."/>
+       - w:val 单位为 Twips (1/1440 英寸)。
+       - 换算公式: 1 厘米 ≈ 567 twips, 1 磅 = 20 twips。
+       - 允许±5%的数值误差。
+
+    2. 字体与段落:
+       - 字体: <w:rPr><w:rFonts .../></w:rPr>
+       - 段落: <w:pPr><w:ind .../>(缩进) <w:jc .../>(对齐) <w:spacing .../>(间距)</w:pPr>
+    
+    输出格式必须是合法的 JSON：
     {
       "details": [{"ruleId": "...", "passed": boolean, "reasoning": "...", "extractedValue": "...", "originalValue": "..."}],
-      "summary": "..."
+      "summary": "请提供一段老师的评语。要求：\n1. 语气自然、亲切，不要机械化。\n2. **严禁**总是以“哇哦”、“同学”等固定词汇开头，请根据具体得分情况灵活开场。\n3. 指出做得好的地方和需要改进的地方。\n4. 字数100字左右。"
     }
-    Rules: ${JSON.stringify(rules)}
+    评分细则列表：${JSON.stringify(rules)}
   `;
 
   if (config.provider === ModelProvider.GEMINI) {
@@ -260,15 +285,12 @@ const callOpenAICompatible = async (sysInst: string, prompt: string, config: AIC
       const data = await response.json();
       const content = data.choices?.[0]?.message?.content || "";
       
-      // 增强的 JSON 提取逻辑
       let jsonStr = content.replace(/```json\n?|```/g, "").trim();
       
-      // 尝试提取第一个合法 JSON 对象或数组（应对模型返回前言/后语的情况）
       const startBracket = jsonStr.indexOf('[');
       const startBrace = jsonStr.indexOf('{');
       
       let startIndex = -1;
-      // 找最前面的 { 或 [
       if (startBracket !== -1 && startBrace !== -1) {
           startIndex = Math.min(startBracket, startBrace);
       } else {
@@ -300,7 +322,6 @@ const processGradingResponse = (rawResult: any, rules: GradingRule[]): GradingRe
     let calculatedTotal = 0;
     const maxScore = rules.reduce((acc, r) => acc + r.points, 0);
 
-    // 防御性访问 details
     const rawDetails = Array.isArray(rawResult?.details) ? rawResult.details : [];
 
     const processedDetails: RuleResult[] = rawDetails.map((d: any) => {

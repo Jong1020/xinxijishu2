@@ -21,6 +21,8 @@ export interface DocxData {
   document: string;
   styles: string;
   comments: string;
+  rels: string;
+  numbering: string;
 }
 
 export interface StudentFile {
@@ -28,6 +30,7 @@ export interface StudentFile {
   name: string;
   file: File;
   status: 'pending' | 'processing' | 'completed' | 'error';
+  progress?: number;
   rawXml?: DocxData;
   result?: GradingResult;
   errorMsg?: string;

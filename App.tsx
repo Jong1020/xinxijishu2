@@ -4,7 +4,7 @@ import { RuleEditor } from './components/RuleEditor';
 import { FileUploader } from './components/FileUploader';
 import { GradingDashboard } from './components/GradingDashboard';
 import { GradingRule, StudentFile, AIConfig, ModelProvider, DocxData, GeminiModel } from './types';
-import { Eye, EyeOff, Settings, Info, Wifi, Loader2, CheckCircle2, XCircle, ChevronDown, ChevronUp } from 'lucide-react';
+import { Eye, EyeOff, Settings, Info, Wifi, Loader2, CheckCircle2, XCircle, ChevronDown, ChevronUp, Save, Upload } from 'lucide-react';
 import { testConnection } from './services/gradingService';
 
 const PROVIDER_DEFAULTS: Record<ModelProvider, { baseUrl: string; model: string; hint: string }> = {
@@ -44,9 +44,16 @@ const PROVIDER_URL_OPTIONS: Partial<Record<ModelProvider, { label: string; url: 
   ]
 };
 
+// Helper to get today's formatted date
+const getDefaultExamTitle = () => {
+  const date = new Date();
+  const dateStr = `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}-${date.getDate().toString().padStart(2, '0')}`;
+  return `信息技术考试 - ${dateStr}`;
+};
+
 function App() {
   const [currentStep, setCurrentStep] = useState(1);
-  const [examTitle, setExamTitle] = useState('新考试');
+  const [examTitle, setExamTitle] = useState(getDefaultExamTitle());
   const [totalScore, setTotalScore] = useState(100);
   const [rules, setRules] = useState<GradingRule[]>([]);
   const [files, setFiles] = useState<StudentFile[]>([]);
@@ -101,8 +108,20 @@ function App() {
     setFiles(prev => prev.map(f => f.id === id ? { ...f, ...updates } : f));
   };
 
+  const handleDeleteFile = (id: string) => {
+    setFiles(prev => prev.filter(f => f.id !== id));
+  };
+
+  const handleAddFiles = (newFiles: StudentFile[]) => {
+    setFiles(prev => [...prev, ...newFiles]);
+  };
+
+  const handleClearAll = () => {
+    setFiles([]);
+  };
+
   return (
-    <Layout currentStep={currentStep}>
+    <Layout currentStep={currentStep} onStepClick={setCurrentStep}>
       {currentStep === 1 && (
         <div className="space-y-8">
            {/* Enhanced AI Settings Panel */}
@@ -121,6 +140,15 @@ function App() {
                   )}
                 </div>
                 <div className="flex items-center gap-4">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setCurrentStep(2); }}
+                    disabled={rules.length === 0}
+                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm mr-2"
+                  >
+                    <Save className="w-4 h-4" />
+                    <span className="hidden sm:inline">保存并下一步</span>
+                  </button>
+
                   <div className="flex items-center gap-2">
                     {testStatus === 'success' && (
                       <span className="flex items-center gap-1 text-xs text-green-600 font-medium animate-in fade-in slide-in-from-right-2">
@@ -317,17 +345,33 @@ function App() {
               totalScore={totalScore} setTotalScore={setTotalScore}
               templateData={templateData} setTemplateData={setTemplateData}
               aiConfig={aiConfig}
-              onNext={() => setCurrentStep(2)}
            />
         </div>
       )}
 
       {currentStep === 2 && (
-        <FileUploader 
-          onFilesAdded={(newFiles) => setFiles([...files, ...newFiles])}
-          onNext={() => setCurrentStep(3)}
-          hasFiles={files.length > 0}
-        />
+        <div className="space-y-6">
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                  <Upload className="w-5 h-5 text-slate-500" />
+                  <h3 className="font-bold text-slate-800">试卷管理</h3>
+              </div>
+              <button
+                  onClick={() => setCurrentStep(3)}
+                  disabled={files.length === 0}
+                  className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+              >
+                  <Save className="w-4 h-4" />
+                  <span className="hidden sm:inline">保存并下一步</span>
+              </button>
+          </div>
+
+          <FileUploader 
+            files={files}
+            onFilesAdded={(newFiles) => setFiles([...files, ...newFiles])}
+            onFileDelete={handleDeleteFile}
+          />
+        </div>
       )}
 
       {currentStep === 3 && (
@@ -335,6 +379,9 @@ function App() {
           files={files} rules={rules}
           aiConfig={aiConfig} templateData={templateData}
           updateFileStatus={updateFileStatus}
+          examTitle={examTitle}
+          onAddFiles={handleAddFiles}
+          onClearAll={handleClearAll}
         />
       )}
     </Layout>

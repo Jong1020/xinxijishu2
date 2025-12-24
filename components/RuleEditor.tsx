@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { GradingRule, DocxData, AIConfig } from '../types';
 import { generateRulesFromText, generateRulesFromTemplate } from '../services/gradingService';
 import { parseDocx } from '../services/docxService';
-import { Sparkles, Plus, Trash2, Save, Loader2, FileUp, Check, Settings as SettingsIcon, Wand2, MessageSquare } from 'lucide-react';
+import { Sparkles, Plus, Trash2, Loader2, FileUp, Check, Settings as SettingsIcon, Wand2, MessageSquare, Calculator } from 'lucide-react';
 
 interface RuleEditorProps {
   rules: GradingRule[];
@@ -14,11 +14,10 @@ interface RuleEditorProps {
   templateData: DocxData | null;
   setTemplateData: (data: DocxData | null) => void;
   aiConfig: AIConfig;
-  onNext: () => void;
 }
 
 export const RuleEditor: React.FC<RuleEditorProps> = ({
-  rules, setRules, examTitle, setExamTitle, totalScore, setTotalScore, templateData, setTemplateData, aiConfig, onNext
+  rules, setRules, examTitle, setExamTitle, totalScore, setTotalScore, templateData, setTemplateData, aiConfig
 }) => {
   const [descriptionInput, setDescriptionInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
@@ -76,17 +75,52 @@ export const RuleEditor: React.FC<RuleEditorProps> = ({
     setRules(rules.map(r => r.id === id ? { ...r, [field]: value } : r));
   };
 
+  const processTemplateFile = async (file: File) => {
+    try {
+      setTemplateFileName(file.name);
+      const data = await parseDocx(file);
+      setTemplateData(data);
+    } catch (err) {
+      alert("模板解析失败: 请确保上传的是有效的 Word (.docx) 文档");
+    }
+  };
+
   const handleTemplateUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      try {
-        setTemplateFileName(file.name);
-        const data = await parseDocx(file);
-        setTemplateData(data);
-      } catch (err) {
-        alert("模板解析失败");
-      }
+      await processTemplateFile(e.target.files[0]);
     }
+  };
+
+  const handleTemplateDrop = async (e: React.DragEvent<HTMLLabelElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      const file = e.dataTransfer.files[0];
+      if (!file.name.toLowerCase().endsWith('.docx')) {
+        alert("请上传 .docx 格式的文件");
+        return;
+      }
+      await processTemplateFile(file);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLLabelElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleDistributeScore = () => {
+    if (rules.length === 0) return;
+    const count = rules.length;
+    const baseScore = Math.floor(totalScore / count);
+    const remainder = totalScore % count;
+
+    const newRules = rules.map((rule, index) => ({
+      ...rule,
+      points: baseScore + (index < remainder ? 1 : 0)
+    }));
+    setRules(newRules);
   };
 
   const currentTotal = rules.reduce((sum, r) => sum + r.points, 0);
@@ -110,14 +144,6 @@ export const RuleEditor: React.FC<RuleEditorProps> = ({
                 className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 text-sm"
               />
             </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">满分值</label>
-              <input 
-                type="number" value={totalScore}
-                onChange={(e) => setTotalScore(Number(e.target.value))}
-                className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 text-sm"
-              />
-            </div>
           </div>
         </div>
 
@@ -127,7 +153,12 @@ export const RuleEditor: React.FC<RuleEditorProps> = ({
           </h2>
           <p className="text-xs text-slate-500 mb-4">上传包含“批注”要求的 Word 文档，AI 将自动识别评分点。</p>
           <input type="file" accept=".docx" onChange={handleTemplateUpload} className="hidden" id="tpl-up" />
-          <label htmlFor="tpl-up" className={`flex flex-col items-center justify-center w-full px-4 py-6 border-2 border-dashed rounded-lg cursor-pointer transition-all ${templateData ? 'border-green-300 bg-green-50' : 'border-slate-200 hover:border-indigo-300 hover:bg-indigo-50'}`}>
+          <label 
+            htmlFor="tpl-up" 
+            onDrop={handleTemplateDrop}
+            onDragOver={handleDragOver}
+            className={`flex flex-col items-center justify-center w-full px-4 py-6 border-2 border-dashed rounded-lg cursor-pointer transition-all ${templateData ? 'border-green-300 bg-green-50' : 'border-slate-200 hover:border-indigo-300 hover:bg-indigo-50'}`}
+          >
             {templateData ? (
               <div className="text-center">
                 <Check className="w-8 h-8 text-green-500 mx-auto mb-2" />
@@ -139,7 +170,7 @@ export const RuleEditor: React.FC<RuleEditorProps> = ({
             ) : (
               <div className="text-center">
                 <FileUp className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                <span className="text-sm text-slate-500">点击上传文档 (.docx)</span>
+                <span className="text-sm text-slate-500">点击或拖拽上传文档 (.docx)</span>
               </div>
             )}
           </label>
@@ -180,13 +211,43 @@ export const RuleEditor: React.FC<RuleEditorProps> = ({
 
       <div className="lg:col-span-2 flex flex-col h-full space-y-4">
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 flex-grow flex flex-col overflow-hidden">
-          <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-            <h2 className="font-semibold text-slate-800">评分规则明细</h2>
-            <div className={`text-sm font-bold px-3 py-1 rounded-full ${currentTotal === totalScore ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
-              当前总分: {currentTotal} / {totalScore}
+          {/* Header Bar: Title, Score, Distribute */}
+          <div className="p-4 border-b border-slate-100 flex flex-wrap gap-4 justify-between items-center bg-slate-50">
+            <div className="flex flex-wrap items-center gap-3">
+              <h2 className="font-semibold text-slate-800">评分规则明细</h2>
+              <span className="text-xs font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                {rules.length} 条
+              </span>
+              
+              <div className="h-6 w-px bg-slate-300 mx-1 hidden sm:block"></div>
+
+              <div className="flex items-center gap-2 bg-white px-2 py-1.5 rounded border border-slate-200 shadow-sm">
+                <span className="text-xs text-slate-500 font-medium">满分</span>
+                <input
+                  type="number"
+                  value={totalScore}
+                  onChange={(e) => setTotalScore(Number(e.target.value))}
+                  className="w-12 text-sm font-bold text-blue-600 outline-none text-center bg-transparent"
+                />
+              </div>
+
+              <button
+                onClick={handleDistributeScore}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 hover:text-blue-600 hover:border-blue-300 rounded-md transition-all shadow-sm"
+              >
+                <Calculator className="w-3.5 h-3.5" />
+                平均分配
+              </button>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <div className={`text-sm font-bold px-3 py-1.5 rounded-full border ${currentTotal === totalScore ? 'bg-green-50 text-green-700 border-green-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                当前: {currentTotal}
+              </div>
             </div>
           </div>
           
+          {/* Rules List */}
           <div className="flex-grow overflow-y-auto p-4 space-y-3">
             {rules.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-slate-400 opacity-60">
@@ -236,19 +297,13 @@ export const RuleEditor: React.FC<RuleEditorProps> = ({
             )}
           </div>
           
-          <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-between items-center">
+          {/* Footer: Just Add Rule now */}
+          <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-center items-center">
             <button
               onClick={handleAddRule}
-              className="flex items-center gap-1.5 text-blue-600 hover:text-blue-700 font-medium text-sm transition-colors"
+              className="flex items-center gap-2 text-slate-600 hover:text-blue-600 font-medium text-sm transition-colors w-full justify-center py-2 hover:bg-slate-100 rounded-md"
             >
-              <Plus className="w-4 h-4" /> 添加规则
-            </button>
-            <button
-              onClick={onNext}
-              disabled={rules.length === 0}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-            >
-              <Save className="w-4 h-4" /> 保存并下一步
+              <Plus className="w-4 h-4" /> 添加评分规则
             </button>
           </div>
         </div>

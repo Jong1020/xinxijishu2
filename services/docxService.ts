@@ -27,10 +27,26 @@ export const parseDocx = async (file: File): Promise<DocxData> => {
       commentsXml = await commentsXmlFile.async("string");
     }
 
+    // Extract document.xml.rels (relationships, crucial for images/textures)
+    const relsFile = content.file("word/_rels/document.xml.rels");
+    let relsXml = "";
+    if (relsFile) {
+      relsXml = await relsFile.async("string");
+    }
+
+    // Extract numbering.xml (lists and bullets)
+    const numberingFile = content.file("word/numbering.xml");
+    let numberingXml = "";
+    if (numberingFile) {
+      numberingXml = await numberingFile.async("string");
+    }
+
     return {
       document: documentXml,
       styles: stylesXml,
-      comments: commentsXml
+      comments: commentsXml,
+      rels: relsXml,
+      numbering: numberingXml
     };
   } catch (error) {
     console.error("Error parsing DOCX:", error);
