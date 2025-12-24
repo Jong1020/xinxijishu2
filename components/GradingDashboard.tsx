@@ -15,6 +15,7 @@ interface GradingDashboardProps {
   examTitle: string;
   onAddFiles: (files: StudentFile[]) => void;
   onClearAll: () => void;
+  onDeleteFile: (id: string) => void;
 }
 
 // Helper to get random item from array
@@ -172,7 +173,7 @@ const getLevelInfo = (score: number, max: number, fileId?: string) => {
   };
 };
 
-export const GradingDashboard: React.FC<GradingDashboardProps> = ({ files, rules, aiConfig, templateData, updateFileStatus, examTitle, onAddFiles, onClearAll }) => {
+export const GradingDashboard: React.FC<GradingDashboardProps> = ({ files, rules, aiConfig, templateData, updateFileStatus, examTitle, onAddFiles, onClearAll, onDeleteFile }) => {
   const [processing, setProcessing] = useState(false);
   const processingRef = useRef(false);
   const [selectedFile, setSelectedFile] = useState<StudentFile | null>(null);
@@ -859,6 +860,17 @@ export const GradingDashboard: React.FC<GradingDashboardProps> = ({ files, rules
                       {file.status === 'processing' && <RefreshCw className="w-4 h-4 animate-spin text-blue-500" />}
                       {file.status === 'error' && <XCircle className="w-4 h-4 text-red-500" />}
                       {file.status === 'completed' && <CheckCircle className="w-4 h-4 text-green-500" />}
+                      
+                      <button 
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onDeleteFile(file.id);
+                        }}
+                        className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-all"
+                        title="删除"
+                      >
+                          <Trash2 className="w-4 h-4" />
+                      </button>
                     </div>
                 </div>
                 {/* Individual Progress Bar */}

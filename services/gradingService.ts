@@ -1,13 +1,30 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { AIConfig, DocxData, GradingResult, GradingRule, ModelProvider, RuleResult } from "../types";
 
-const cleanXml = (xml: string): string => {
+// 动态计算上下文限制
+const getContextLimit = (config: AIConfig): number => {
+  switch (config.provider) {
+    case ModelProvider.GEMINI:
+      return 800000; // Gemini Pro/Flash 拥有极大的上下文窗口
+    case ModelProvider.DEEPSEEK:
+      return 60000;  // DeepSeek V3/R1 上下文较大
+    case ModelProvider.QWEN:
+      return 30000;
+    default:
+      return 20000;  // 保守默认值
+  }
+};
+
+const cleanXml = (xml: string, limit: number): string => {
   if (!xml) return "";
   // 移除命名空间干扰，减小 Token 占用，但保留属性
   let cleaned = xml.replace(/ xmlns:[^=]+="[^"]+"/g, "");
-  // 增加长度限制，避免丢失关键信息（如底部的表格）
-  if (cleaned.length > 80000) {
-      return cleaned.slice(0, 80000) + "...(truncated)";
+  
+  if (cleaned.length > limit) {
+      // 保留头部（通常包含样式定义）和尾部（通常包含页面设置 sectPr）
+      const head = cleaned.slice(0, Math.floor(limit * 0.7));
+      const tail = cleaned.slice(cleaned.length - Math.floor(limit * 0.3));
+      return head + "\n...[Content Truncated]...\n" + tail;
   }
   return cleaned;
 };
@@ -130,9 +147,10 @@ export const generateRulesFromText = async (text: string, totalPoints: number, c
 
 // 从模板文档 XML（含批注）智能生成规则
 export const generateRulesFromTemplate = async (templateData: DocxData, totalPoints: number, config: AIConfig): Promise<GradingRule[]> => {
-  const docContent = cleanXml(templateData.document);
-  const commentsContent = cleanXml(templateData.comments);
-  const relsContent = cleanXml(templateData.rels);
+  const limit = getContextLimit(config);
+  const docContent = cleanXml(templateData.document, limit);
+  const commentsContent = cleanXml(templateData.comments, 10000);
+  const relsContent = cleanXml(templateData.rels, 5000);
   
   const prompt = `
     你正在进行高精度的信息技术自动阅卷规则提取。
@@ -160,16 +178,18 @@ export const gradeDocument = async (
   rules: GradingRule[],
   config: AIConfig
 ): Promise<GradingResult> => {
-  const studentDoc = cleanXml(studentData.document);
-  const studentStyles = cleanXml(studentData.styles);
-  const studentComments = cleanXml(studentData.comments);
-  const studentRels = cleanXml(studentData.rels);
-  const studentNumbering = cleanXml(studentData.numbering);
+  const limit = getContextLimit(config);
+  
+  const studentDoc = cleanXml(studentData.document, limit);
+  const studentStyles = cleanXml(studentData.styles, 10000);
+  const studentComments = cleanXml(studentData.comments, 5000);
+  const studentRels = cleanXml(studentData.rels, 5000);
+  const studentNumbering = cleanXml(studentData.numbering, 5000);
 
   let promptContext = templateData 
     ? `=== DIFFERENTIAL GRADING ===
        Compare STUDENT against TEMPLATE.
-       TEMPLATE XML: ${cleanXml(templateData.document).slice(0, 15000)}
+       TEMPLATE XML: ${cleanXml(templateData.document, 15000)}
        STUDENT XML: ${studentDoc}
        STYLES XML: ${studentStyles}
        RELS XML: ${studentRels}
@@ -184,29 +204,68 @@ export const gradeDocument = async (
        COMMENTS XML: ${studentComments}`;
 
   const systemInstruction = `
-    你是一名经验丰富的信息技术教师。请严格按照评分细则对比 XML 结构，进行客观评分。
+    你是一名经验丰富的信息技术教师，正在对 Word 2010 文档 XML 进行精准评分。
     
-    评分核心原则：
-    1. 原子化检查：每个 RuleId 对应一个具体的格式或内容属性。
-    2. 严格匹配：格式属性必须精确符合要求。
+    === 🔍 XML 导航与评分指南 (Navigation Guide) ===
+    为了提高准确率，请遵循以下查找路径：
 
-    === 关键技术指标检测指南 (Technical Specs) ===
-    
-    1. 表格行高 (Table Row Height):
-       - 标签: <w:trPr> 下的 <w:trHeight w:val="NNN" w:hRule="..."/>
-       - w:val 单位为 Twips (1/1440 英寸)。
-       - 换算公式: 1 厘米 ≈ 567 twips, 1 磅 = 20 twips。
-       - 允许±5%的数值误差。
+    1. **字体 (Font)**:
+       - 查找 <w:rPr> (Run Properties) -> <w:rFonts w:ascii="..." w:eastAsia="..."/>
+       - 注意：中文字体通常在 w:eastAsia，英文字体在 w:ascii。
+       - 颜色: <w:color w:val="..."/> (Hex值) 或 <w:color w:themeColor="..."/>。
 
-    2. 字体与段落:
-       - 字体: <w:rPr><w:rFonts .../></w:rPr>
-       - 段落: <w:pPr><w:ind .../>(缩进) <w:jc .../>(对齐) <w:spacing .../>(间距)</w:pPr>
+    2. **段落 (Paragraph)**:
+       - 查找 <w:pPr> (Paragraph Properties)。
+       - 对齐: <w:jc w:val="center|left|right|both"/>。
+       - 缩进: <w:ind w:firstLine="200" (首行缩进, ~100 per char) /> 或 <w:ind w:left="..."/>。
+       - 行距: <w:spacing w:line="360" (行距, 240=1倍) w:lineRule="auto|exact"/>。
+
+    3. **页面设置与边距 (Page Setup)**:
+       - **位置**: 必须查找文档 XML 末尾的 <w:sectPr> 标签，或者段落属性 <w:pPr> 中的 <w:sectPr> (分节符)。
+       - **标签**: <w:pgMar w:top="..." w:bottom="..." w:left="..." w:right="..." ... />
+       - **单位**: 数值单位为 **Twips** (1/1440 英寸)。
+         * 1 厘米 ≈ 567 twips
+         * 2 厘米 ≈ 1134 twips
+         * 2.54 厘米 (1英寸) = 1440 twips
+         * 3.17 厘米 ≈ 1800 twips
+       - **判定**: 允许 ±5% 的数值误差。如果找不到 <w:sectPr>，请尝试在文档最后一部分查找。
+
+    4. **艺术字 (WordArt) / 文本效果**:
+       - Word 2010 艺术字通常是 <w:drawing> (DrawingML) 或 <v:shape> (VML)。
+       - **标签**: 查找 <w:drawing> 下的 <a:graphic> -> <wps:wsp> (WordProcessingShape)。
+       - **内容**: 在 <wps:txbx> -> <w:txbxContent> 中查找文字。
+       - **效果**: 检查 <wps:spPr> (形状属性) 或 <w:rPr> 下的文本效果 (<w:textEffect>, <w:shadow>, <w:reflection>, <w:glow>)。
+       - **注意**: 普通文本 <w:t> 不含这些效果。
+
+    5. **删除的文字 (Deleted Text / Revisions)**:
+       - **标签**: <w:del> 包裹的内容。
+       - **内容检查类规则**: 忽略 <w:del> 标签内的文字，它们已被删除。只看 <w:t> 或 <w:ins> 中的文字。
+       - **操作检查类规则**: 如果要求“删除某段文字”，若该文字被 <w:del> 包裹或完全消失，则视为【通过】。
+
+    6. **表格行高 (Table Row Height)**:
+       - 标签: <w:trPr> 下的 <w:trHeight w:val="NNN" w:hRule="..."/> (Twips)。
+
+    === 🧠 评分执行策略 ===
+    对于每一条规则，请按照以下步骤思考：
+    1. **Locate**: 在 XML 中搜索相关的具体节点 (如 w:pgMar, w:rFonts)。
+    2. **Extract**: 提取实际值 (如 w:top="1440")。
+    3. **Verify**: 将提取值与规则要求对比 (如 1440 twips ≈ 2.54cm)。
+    4. **Reason**: 如果通过，说明找到的值；如果不通过，说明实际找到的值是什么，或者是否完全未找到。
     
     输出格式必须是合法的 JSON：
     {
-      "details": [{"ruleId": "...", "passed": boolean, "reasoning": "...", "extractedValue": "...", "originalValue": "..."}],
-      "summary": "请提供一段老师的评语。要求：\n1. 语气自然、亲切，不要机械化。\n2. **严禁**总是以“哇哦”、“同学”等固定词汇开头，请根据具体得分情况灵活开场。\n3. 指出做得好的地方和需要改进的地方。\n4. 字数100字左右。"
+      "details": [
+        {
+          "ruleId": "规则ID",
+          "passed": boolean,
+          "reasoning": "简要说明理由，例如：'找到 w:pgMar w:top=\"1440\"，符合 2.54cm 的要求'",
+          "extractedValue": "提取到的原始 XML 片段或数值，例如 '1440' 或 '宋体'",
+          "originalValue": "预期值"
+        }
+      ],
+      "summary": "一段自然、鼓励性的老师评语 (100字左右)。"
     }
+    
     评分细则列表：${JSON.stringify(rules)}
   `;
 
@@ -258,6 +317,7 @@ const callOpenAICompatible = async (sysInst: string, prompt: string, config: AIC
     if (!config.apiKey) throw new Error(`${config.provider} API Key 未配置`);
 
     const baseUrl = config.baseUrl.replace(/\/+$/, "");
+    const isDeepSeekReasoner = config.model.includes('reasoner');
 
     try {
       const response = await fetch(`${baseUrl}/chat/completions`, {
@@ -273,7 +333,8 @@ const callOpenAICompatible = async (sysInst: string, prompt: string, config: AIC
                   { role: "user", content: prompt }
               ],
               stream: false,
-              ...(config.provider === ModelProvider.DEEPSEEK ? { response_format: { type: 'json_object' } } : {})
+              // DeepSeek R1 (reasoner) 不支持 json_object 模式，普通模型支持
+              ...(!isDeepSeekReasoner && config.provider !== ModelProvider.DEEPSEEK ? { response_format: { type: 'json_object' } } : {})
           })
       });
 
@@ -285,16 +346,22 @@ const callOpenAICompatible = async (sysInst: string, prompt: string, config: AIC
       const data = await response.json();
       const content = data.choices?.[0]?.message?.content || "";
       
+      // 增强的 JSON 提取逻辑
       let jsonStr = content.replace(/```json\n?|```/g, "").trim();
       
+      // 如果是推理模型，可能会包含 <think> 标签，需要移除
+      jsonStr = jsonStr.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+
       const startBracket = jsonStr.indexOf('[');
       const startBrace = jsonStr.indexOf('{');
       
       let startIndex = -1;
       if (startBracket !== -1 && startBrace !== -1) {
           startIndex = Math.min(startBracket, startBrace);
+      } else if (startBracket !== -1) {
+          startIndex = startBracket;
       } else {
-          startIndex = Math.max(startBracket, startBrace);
+          startIndex = startBrace;
       }
       
       if (startIndex !== -1) {
@@ -310,7 +377,7 @@ const callOpenAICompatible = async (sysInst: string, prompt: string, config: AIC
           return JSON.parse(jsonStr);
       } catch (e) {
           console.error("JSON Parse Error. Raw content:", content);
-          throw new Error("模型返回的数据格式错误，无法解析为 JSON");
+          throw new Error("模型返回的数据格式错误，无法解析为 JSON。请尝试重新评分。");
       }
     } catch (e: any) {
       console.error("OpenAI Compatible Call Error:", e);

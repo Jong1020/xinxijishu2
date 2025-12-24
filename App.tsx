@@ -110,6 +110,8 @@ function App() {
 
   const handleDeleteFile = (id: string) => {
     setFiles(prev => prev.filter(f => f.id !== id));
+    // If the selected file is deleted, we might want to clear the selection in GradingDashboard,
+    // but the component handles selection state internally (which will just show "select a file").
   };
 
   const handleAddFiles = (newFiles: StudentFile[]) => {
@@ -382,6 +384,7 @@ function App() {
           examTitle={examTitle}
           onAddFiles={handleAddFiles}
           onClearAll={handleClearAll}
+          onDeleteFile={handleDeleteFile}
         />
       )}
     </Layout>
