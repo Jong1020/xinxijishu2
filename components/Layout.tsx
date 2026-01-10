@@ -1,5 +1,7 @@
-import React from 'react';
-import { GraduationCap, Settings, Upload, CheckCircle } from 'lucide-react';
+
+import React, { useState } from 'react';
+import { GraduationCap, Settings, Upload, CheckCircle, HelpCircle } from 'lucide-react';
+import { HelpModal } from './HelpModal';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -14,8 +16,12 @@ const steps = [
 ];
 
 export const Layout: React.FC<LayoutProps> = ({ children, currentStep, onStepClick }) => {
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
+      <HelpModal isOpen={isHelpOpen} onClose={() => setIsHelpOpen(false)} />
+      
       {/* Header */}
       <header className="bg-white border-b border-slate-200 sticky top-0 z-50 transition-all">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between py-4">
@@ -61,12 +67,20 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentStep, onStepCli
                   `}>
                     {step.id}
                   </div>
-                  <span className={`font-bold tracking-tight whitespace-nowrap ${isActive ? 'text-base' : 'text-sm'}`}>
+                  <span className={`font-bold tracking-tight whitespace-nowrap hidden sm:inline ${isActive ? 'text-base' : 'text-sm'}`}>
                     {step.name}
                   </span>
                 </div>
               );
             })}
+
+            <button 
+              onClick={() => setIsHelpOpen(true)}
+              className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-all"
+              title="查看帮助"
+            >
+              <HelpCircle className="w-6 h-6" />
+            </button>
           </nav>
         </div>
       </header>
@@ -77,9 +91,20 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentStep, onStepCli
       </main>
 
       {/* Footer */}
-      <footer className="bg-white border-t border-slate-200 py-6">
-        <div className="max-w-7xl mx-auto px-4 text-center text-slate-400 text-sm">
-          <p>© {new Date().getFullYear()} IT Exam Auto-Grader. Powered by Gemini & DeepSeek.</p>
+      <footer className="bg-white border-t border-slate-200 py-8">
+        <div className="max-w-7xl mx-auto px-4 flex flex-col items-center gap-4">
+          <div className="flex items-center gap-6 text-sm">
+            <button onClick={() => setIsHelpOpen(true)} className="text-slate-500 hover:text-blue-600 font-medium transition-colors">
+              使用指南
+            </button>
+            <span className="text-slate-200">|</span>
+            <span className="text-slate-400 font-medium">Author: Jong</span>
+            <span className="text-slate-200">|</span>
+            <span className="text-slate-400 italic">V1.0.0 Stable</span>
+          </div>
+          <p className="text-slate-400 text-sm">
+            © {new Date().getFullYear()} IT Exam Auto-Grader. Powered by Gemini & DeepSeek.
+          </p>
         </div>
       </footer>
     </div>
